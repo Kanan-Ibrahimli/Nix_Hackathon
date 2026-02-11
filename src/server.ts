@@ -1,16 +1,33 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 
+/**
+ * HARDCODE ULTIMATE BOT - FINAL VERSION
+ * Strategy: Fast Economy into Aggressive Mid-Game Control
+ */
+
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 const PORT = process.env.PORT || 8000;
+
+// Log collector requirement
 const logBot = () => console.log('[KW-BOT] Mega ogudor');
 
-app.get('/healthz', (req, res) => res.status(200).json({ status: "OK" }));
+// Helper to calculate next upgrade cost
+const getUpgradeCost = (level: number): number => {
+    const costs: { [key: number]: number } = { 1: 50, 2: 88, 3: 153, 4: 268, 5: 469 };
+    return costs[level] || 9999;
+};
 
-app.get('/info', (req, res) => {
+// 1. Health Check
+app.get('/healthz', (req: Request, res: Response) => {
+    res.status(200).json({ status: "OK" });
+});
+
+// 2. Metadata Info
+app.get('/info', (req: Request, res: Response) => {
     logBot();
     res.json({
         name: "HardCode",
@@ -19,101 +36,111 @@ app.get('/info', (req, res) => {
     });
 });
 
+// 3. Negotiation Phase
 app.post('/negotiate', (req: Request, res: Response) => {
     logBot();
     const { enemyTowers } = req.body;
     const aliveEnemies = enemyTowers.filter((t: any) => t.hp > 0);
+    
     if (aliveEnemies.length === 0) return res.json([]);
 
+    // Logic: Form alliance with the strongest to suppress the weakest
     const strongest = [...aliveEnemies].sort((a, b) => (b.hp + b.armor) - (a.hp + a.armor))[0];
     const weakest = [...aliveEnemies].sort((a, b) => a.hp - b.hp)[0];
 
-    res.json([{ allyId: strongest.playerId, attackTargetId: weakest.playerId }]);
+    res.json([{
+        allyId: strongest.playerId,
+        attackTargetId: weakest.playerId
+    }]);
 });
 
+// 4. Combat Phase - The Core Brain
 app.post('/combat', (req: Request, res: Response) => {
     logBot();
     const { playerTower, enemyTowers, turn, previousAttacks } = req.body;
     let resources = playerTower.resources;
     const actions: any[] = [];
     const aliveEnemies = enemyTowers.filter((t: any) => t.hp > 0);
-
-    const upgradeCosts: { [key: number]: number } = { 1: 50, 2: 88, 3: 153, 4: 268, 5: 469 };
-    const costToUpgrade = upgradeCosts[playerTower.level];
-
+    
+    const costToUpgrade = getUpgradeCost(playerTower.level);
+    const beingAttacked = previousAttacks && previousAttacks.length > 0;
+    
+    // Survival Analytics
     const minEnemyHp = aliveEnemies.length > 0 ? Math.min(...aliveEnemies.map((e: any) => e.hp)) : 100;
-    const isWeakerThanOthers = playerTower.hp <= minEnemyHp;
+    const isWeakestInGame = playerTower.hp <= minEnemyHp;
 
-    // ROUND 1: Initial Reconnaissance
+    // --- PHASE 1: ROUND 1 SPECIAL START ---
     if (turn === 1) {
-        if (resources >= 6) {
-            actions.push({ type: "armor", amount: 6 });
-            resources -= 6;
+        // Strategy: 10 Armor, 10 for Upgrade path (Total 20 resource turn start)
+        if (resources >= 10) {
+            actions.push({ type: "armor", amount: 10 });
+            resources -= 10;
         }
-        aliveEnemies.forEach((enemy: any) => {
-            if (resources >= 2) {
-                actions.push({ type: "attack", targetId: enemy.playerId, troopCount: 2 });
-                resources -= 2;
-            }
-        });
+        // Save the rest for upgrade
         return res.json(actions);
     }
 
-    // INTERMEDIATE PHASE: Waiting for Level 2
-    // If turn > 1 and level < 2, we don't attack unless provoked
-    const beingAttacked = previousAttacks && previousAttacks.length > 0;
-    
-    if (playerTower.level < 2 && turn > 1) {
-        // Defensive priority
-        if (beingAttacked || isWeakerThanOthers) {
+    // --- PHASE 2: ECONOMIC TURBO (Waiting for Level 2) ---
+    if (playerTower.level < 2) {
+        // If someone attacks us while we are Level 1, we must defend
+        if (beingAttacked || isWeakestInGame || playerTower.hp < 70) {
             const defensiveArmor = Math.min(resources, 15);
             actions.push({ type: "armor", amount: defensiveArmor });
             resources -= defensiveArmor;
-            
-            // Minimal counter-attack to discourage attackers
+
+            // Retaliate only if attacked, with minimal force
             if (beingAttacked && resources >= 5) {
-                actions.push({ type: "attack", targetId: previousAttacks[0].playerId, troopCount: 5 });
+                actions.push({
+                    type: "attack",
+                    targetId: previousAttacks[0].playerId,
+                    troopCount: 5
+                });
                 resources -= 5;
             }
         } else {
-            // Passive saving for Upgrade
-            if (resources >= 5 && playerTower.armor < 40) {
+            // Passive stance: slow armor build while saving for Level 2
+            if (playerTower.armor < 30 && resources >= 5) {
                 actions.push({ type: "armor", amount: 5 });
                 resources -= 5;
             }
         }
 
-        if (costToUpgrade && resources >= costToUpgrade) {
+        // Apply Upgrade as soon as possible
+        if (resources >= costToUpgrade) {
             actions.push({ type: "upgrade" });
             resources -= costToUpgrade;
         }
         return res.json(actions);
     }
 
-    // POST LEVEL 2 LOGIC
-    // 1. Emergency Defense (Survival)
-    if (isWeakerThanOthers || playerTower.hp < 45) {
-        const emergencyArmor = Math.min(resources, 25);
+    // --- PHASE 3: ADVANCED LOGIC (POST LEVEL 2) ---
+
+    // A. Priority 1: Survival & Damage Control
+    if (isWeakestInGame || playerTower.hp < 40) {
+        // Emergency Armor: Scale with resources
+        const emergencyArmor = Math.min(resources, Math.floor(resources * 0.4) + 10);
         if (emergencyArmor > 0) {
             actions.push({ type: "armor", amount: emergencyArmor });
             resources -= emergencyArmor;
         }
     } else if (playerTower.armor < 50) {
-        // Maintain a healthy armor buffer
-        const maintainArmor = Math.min(resources, 10);
-        actions.push({ type: "armor", amount: maintainArmor });
-        resources -= maintainArmor;
+        // Constant armor buffering to prevent chip damage
+        const bufferArmor = Math.min(resources, 8);
+        actions.push({ type: "armor", amount: bufferArmor });
+        resources -= bufferArmor;
     }
 
-    // 2. Continuous Upgrading (Economy is King)
-    if (costToUpgrade && resources >= costToUpgrade && playerTower.level < 5) {
+    // B. Priority 2: Economic Dominance
+    // Keep upgrading to reach Level 5 for 101 res/turn
+    if (resources >= costToUpgrade && playerTower.level < 5) {
         actions.push({ type: "upgrade" });
         resources -= costToUpgrade;
     }
 
-    // 3. Attack Logic
+    // C. Priority 3: Strategic Offense
     if (resources > 0 && aliveEnemies.length > 0) {
-        // DUEL MODE: Last enemy standing
+        
+        // 1. FINAL DUEL: All-in strategy
         if (aliveEnemies.length === 1) {
             actions.push({
                 type: "attack",
@@ -122,20 +149,32 @@ app.post('/combat', (req: Request, res: Response) => {
             });
             resources = 0;
         } 
-        // STRATEGIC STRIKE: Target weakest with controlled resources
-        else if (playerTower.level >= 2 && !isWeakerThanOthers) {
+        
+        // 2. MULTI-TARGET: Target the weakest link
+        else if (!isWeakestInGame) {
             const target = [...aliveEnemies].sort((a, b) => a.hp - b.hp)[0];
-            const killAmount = target.hp + (target.armor || 0) + 1;
+            const targetHealthPool = target.hp + (target.armor || 0);
             
-            // Use up to 80% of resources for attack, keep 20% for next turn safety
-            const attackAmount = Math.min(resources, killAmount, Math.floor(resources * 0.8) + 1);
-            
-            actions.push({ type: "attack", targetId: target.playerId, troopCount: attackAmount });
-            resources -= attackAmount;
+            // Calculation: How much can we afford to spend while staying safe?
+            // Spend up to 75% of current resources, or enough to kill if possible
+            const safeSpending = Math.floor(resources * 0.75);
+            const attackPower = Math.min(resources, targetHealthPool + 1, safeSpending);
+
+            if (attackPower > 5) {
+                actions.push({
+                    type: "attack",
+                    targetId: target.playerId,
+                    troopCount: attackPower
+                });
+                resources -= attackPower;
+            }
         }
     }
 
     res.json(actions);
 });
 
-app.listen(PORT, () => console.log(`🚀 HardCode Survival-G-V3 on port ${PORT}`));
+// App Initiation
+app.listen(PORT, () => {
+    console.log(`🚀 HardCode Ultimate Server running on port ${PORT}`);
+});
