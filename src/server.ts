@@ -41,11 +41,10 @@ app.post('/combat', (req: Request, res: Response) => {
     const upgradeCosts: { [key: number]: number } = { 1: 50, 2: 88, 3: 153, 4: 268, 5: 469 };
     const costToUpgrade = upgradeCosts[playerTower.level];
 
-    // Check if we are the weakest player in the field
     const minEnemyHp = aliveEnemies.length > 0 ? Math.min(...aliveEnemies.map((e: any) => e.hp)) : 100;
     const isWeakerThanOthers = playerTower.hp <= minEnemyHp;
 
-    // ROUND 1 LOGIC
+    // ROUND 1: Initial Reconnaissance
     if (turn === 1) {
         if (resources >= 6) {
             actions.push({ type: "armor", amount: 6 });
@@ -60,45 +59,61 @@ app.post('/combat', (req: Request, res: Response) => {
         return res.json(actions);
     }
 
-    // ROUND 2 LOGIC
-    if (turn === 2) {
-        const beingAttacked = previousAttacks && previousAttacks.length > 0;
-        if (resources >= 10) {
-            actions.push({ type: "armor", amount: 10 });
-            resources -= 10;
+    // INTERMEDIATE PHASE: Waiting for Level 2
+    // If turn > 1 and level < 2, we don't attack unless provoked
+    const beingAttacked = previousAttacks && previousAttacks.length > 0;
+    
+    if (playerTower.level < 2 && turn > 1) {
+        // Defensive priority
+        if (beingAttacked || isWeakerThanOthers) {
+            const defensiveArmor = Math.min(resources, 15);
+            actions.push({ type: "armor", amount: defensiveArmor });
+            resources -= defensiveArmor;
+            
+            // Minimal counter-attack to discourage attackers
+            if (beingAttacked && resources >= 5) {
+                actions.push({ type: "attack", targetId: previousAttacks[0].playerId, troopCount: 5 });
+                resources -= 5;
+            }
+        } else {
+            // Passive saving for Upgrade
+            if (resources >= 5 && playerTower.armor < 40) {
+                actions.push({ type: "armor", amount: 5 });
+                resources -= 5;
+            }
         }
-        if (!beingAttacked) return res.json(actions);
-        const attacker = previousAttacks[0];
-        const attackBack = Math.min(resources, 5);
-        actions.push({ type: "attack", targetId: attacker.playerId, troopCount: attackBack });
-        resources -= attackBack;
+
+        if (costToUpgrade && resources >= costToUpgrade) {
+            actions.push({ type: "upgrade" });
+            resources -= costToUpgrade;
+        }
         return res.json(actions);
     }
 
-    // SURVIVAL MODE: If we are the weakest or HP is very low, focus purely on armor
-    if (isWeakerThanOthers || playerTower.hp < 40) {
-        const defensiveArmor = Math.min(resources, 30); // Heavy investment in defense
-        if (defensiveArmor > 0) {
-            actions.push({ type: "armor", amount: defensiveArmor });
-            resources -= defensiveArmor;
+    // POST LEVEL 2 LOGIC
+    // 1. Emergency Defense (Survival)
+    if (isWeakerThanOthers || playerTower.hp < 45) {
+        const emergencyArmor = Math.min(resources, 25);
+        if (emergencyArmor > 0) {
+            actions.push({ type: "armor", amount: emergencyArmor });
+            resources -= emergencyArmor;
         }
-    } else {
-        // Standard defense if not in immediate danger
-        if (resources >= 5 && playerTower.armor < 60) {
-            actions.push({ type: "armor", amount: 5 });
-            resources -= 5;
-        }
+    } else if (playerTower.armor < 50) {
+        // Maintain a healthy armor buffer
+        const maintainArmor = Math.min(resources, 10);
+        actions.push({ type: "armor", amount: maintainArmor });
+        resources -= maintainArmor;
     }
 
-    // UPGRADE PRIORITY
+    // 2. Continuous Upgrading (Economy is King)
     if (costToUpgrade && resources >= costToUpgrade && playerTower.level < 5) {
         actions.push({ type: "upgrade" });
         resources -= costToUpgrade;
     }
 
-    // ATTACK LOGIC
+    // 3. Attack Logic
     if (resources > 0 && aliveEnemies.length > 0) {
-        // DUEL MODE: 1v1
+        // DUEL MODE: Last enemy standing
         if (aliveEnemies.length === 1) {
             actions.push({
                 type: "attack",
@@ -107,11 +122,13 @@ app.post('/combat', (req: Request, res: Response) => {
             });
             resources = 0;
         } 
-        // LEVEL 2+ ATTACK (Only if we aren't struggling to survive)
+        // STRATEGIC STRIKE: Target weakest with controlled resources
         else if (playerTower.level >= 2 && !isWeakerThanOthers) {
             const target = [...aliveEnemies].sort((a, b) => a.hp - b.hp)[0];
             const killAmount = target.hp + (target.armor || 0) + 1;
-            const attackAmount = Math.min(resources, killAmount, Math.floor(resources * 0.7) + 1);
+            
+            // Use up to 80% of resources for attack, keep 20% for next turn safety
+            const attackAmount = Math.min(resources, killAmount, Math.floor(resources * 0.8) + 1);
             
             actions.push({ type: "attack", targetId: target.playerId, troopCount: attackAmount });
             resources -= attackAmount;
@@ -121,4 +138,4 @@ app.post('/combat', (req: Request, res: Response) => {
     res.json(actions);
 });
 
-app.listen(PORT, () => console.log(`🚀 HardCode Survival-Genius Bot on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 HardCode Survival-G-V3 on port ${PORT}`));
